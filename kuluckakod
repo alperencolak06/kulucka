@@ -1,0 +1,442 @@
+#include <string.h>
+#include "RTClib.h"
+#include <OneWire.h>
+#include <avr/Progmem.h>
+#include <EEPROM.h>
+#include <RBDdimmer.h>
+#include "DHT.h"
+#define DHTPIN 5
+#define outputPin  11 
+#define zerocross  2
+#include <DallasTemperature.h>
+DHT dht(DHTPIN, DHT22);
+OneWire oneWire(6);
+DallasTemperature DS18B20(&oneWire);
+DeviceAddress DS18B20adres;
+dimmerLamp dimmer(outputPin);
+float C;
+RTC_DS1307 rtc;
+#include <LiquidCrystal_I2C.h>
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+DateTime baslangicZamani;
+DateTime bitisZamani;
+byte say;
+const float PROGMEM kp=44 ;         //Mine was 2.5
+const float PROGMEM ki=0.18;         //Mine was 0.06
+const float PROGMEM kd=8.4;         //Mine was 0.8
+static float PID_p, PID_i, PID_d, PID_total;      //We will store here the real temp 
+float  Setpoint = 36.6;      //In degrees C
+const float PROGMEM SetpointDiff = 30;
+const float PROGMEM refresh_rate = 200;                   //PID loop time in ms
+float now_pid_error, prev_pid_error;
+const byte artirButon=8;
+const byte azaltButon=9;
+const byte okButon=10;
+const byte geriButon=7;
+const byte kapaButon=4;
+unsigned long eskiZaman,yeniZaman;
+unsigned long elapsedTime, now_time, prev_time;
+bool girdi,geriGirdi,geriCikti,bitti=true,TT,donuyor,calis_set,calis_set2,nozul;
+uint8_t art_azal=0;
+uint8_t menuGez;
+uint8_t zamanla;
+float h;
+char gunchar[20],aychar[5],yilchar[5],saatchar[5],dakikachar[5],igun[5],isaat[5],idk[5],isn[50],tarihchar[20];;
+uint8_t sayac;
+uint8_t testDegeri;
+uint8_t anaMenu_var;
+uint8_t baslatMenuGez;
+uint8_t gun=15,ay=6,yil=2020,saat=12,dakika=30;
+struct turler{
+char isim[20];
+};
+struct calis{
+uint8_t sicaklik;
+uint8_t nem;
+uint8_t gun;
+uint8_t kacdk;
+uint8_t cikis_gun;
+uint8_t cikis_nem;
+uint8_t cikis_isi;};
+struct calis davuk={36,70,21,10,3,75,37};
+struct calis gaz={36,70,21,10,3,75,37};
+const char menuDizi[7][12] ={"tavuk","kaz","manual","Tarih Ayarla"};
+const char geriDizi[7][12] ={"isi","nem","Kac dk","cikis isi","cikis nem","baslat"};
+struct calis secim;
+
+void setup() {
+  secim.kacdk=1;
+   if (! rtc.begin()) {
+    Serial.flush();
+    while (1) delay(10);
+  }
+   epromOku();
+   
+   DS18B20.begin();
+   DS18B20.getAddress(DS18B20adres, 0);
+   DS18B20.setResolution(DS18B20adres, 12);
+   dimmer.begin(NORMAL_MODE, ON);
+   dht.begin();
+  lcd.begin();
+  lcd.backlight();
+  pinMode(kapaButon, INPUT_PULLUP);
+   pinMode(artirButon, INPUT_PULLUP);
+  pinMode(artirButon, INPUT_PULLUP);
+  pinMode(azaltButon, INPUT_PULLUP);
+  pinMode(okButon, INPUT_PULLUP);
+  pinMode(geriButon, INPUT_PULLUP);
+  Serial.begin(9600);
+  menuOlustur(0,menuDizi,sizeof(menuDizi));
+}
+
+void loop() {
+    
+  if(bitti)
+  {
+  menudizinti((sizeof(menuDizi)/20)-1,menuDizi,sizeof(menuDizi));
+  }
+  else
+  baslat();
+  
+}
+
+int butonBasma(int gelenDeger,char gelenYazi[16],int sutun,int satir,char ch[15]){
+  
+   lcd.clear();lcd.print(gelenYazi);lcd.setCursor(sutun,satir);lcd.print(gelenDeger);
+   bool menuBasla=true;
+  while(menuBasla){
+
+  while(!digitalRead(artirButon)||!digitalRead(azaltButon)){
+    if(girdi!=1){
+    if(!digitalRead(artirButon))art_azal=1;
+   else if(!digitalRead(azaltButon))art_azal=4;
+    }
+    delay(50);
+    sayac++;
+    if((sayac>20) && !digitalRead(artirButon)){gelenDeger+=10; art_azal=3;girdi=1;sayac=0;if(!(strcmp(ch,"saat"))&& gelenDeger>20 )gelenDeger=20; if(!(strcmp(ch,"dakika"))&& gelenDeger>59 )gelenDeger=59; if(!(strcmp(ch,"ay"))&& gelenDeger>12 )gelenDeger=12; if(!(strcmp(ch,"gun"))&& gelenDeger>30 && ay!=2){if(ay<=7 && ay%2==1)gelenDeger=31; else if(ay>=7 && ay%2==0)gelenDeger=31; else gelenDeger=30;} else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4!=0)gelenDeger=28; else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4==0)gelenDeger=29; if(gelenDeger<=0)gelenDeger=1;ekranaYazdir(gelenYazi,gelenDeger,sutun,satir);}
+    else if(sayac>20&&!digitalRead(azaltButon)){gelenDeger-=10; art_azal=3;girdi=1;sayac=0;if(!(strcmp(ch,"saat"))&& gelenDeger>20 )gelenDeger=20; if(!(strcmp(ch,"dakika"))&& gelenDeger>59 )gelenDeger=59;if(!(strcmp(ch,"ay"))&& gelenDeger>12 )gelenDeger=12; if(!(strcmp(ch,"gun"))&& gelenDeger>30 && ay!=2){if(ay<=7 && ay%2==1)gelenDeger=31; else if(ay>=7 && ay%2==0)gelenDeger=31; else gelenDeger=30;} else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4!=0)gelenDeger=28; else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4==0)gelenDeger=29; if(gelenDeger<=0)gelenDeger=1; ekranaYazdir(gelenYazi,gelenDeger,sutun,satir);}
+  }
+  
+  sayac=0;
+  
+  if((girdi ==0) &&(art_azal==1)){ art_azal=3;gelenDeger++; sayac=0;if(!(strcmp(ch,"ay"))&& gelenDeger>12 )gelenDeger=12; if(!(strcmp(ch,"saat"))&& gelenDeger>20 )gelenDeger=20; if(!(strcmp(ch,"dakika"))&& gelenDeger>59 )gelenDeger=59;if(!(strcmp(ch,"gun"))&& gelenDeger>30 && ay!=2){if(ay<=7 && ay%2==1)gelenDeger=31; else if(ay>=7 && ay%2==0)gelenDeger=31; else gelenDeger=30;} else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4!=0)gelenDeger=28; else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4==0)gelenDeger=29; if(gelenDeger<=0)gelenDeger=1; ekranaYazdir(gelenYazi,gelenDeger,sutun,satir);}
+  else if((girdi ==0)&&(art_azal==4)){art_azal=3;gelenDeger--; sayac=0;if(!(strcmp(ch,"ay"))&& gelenDeger>12 )gelenDeger=12; if(!(strcmp(ch,"saat"))&& gelenDeger>20 )gelenDeger=20; if(!(strcmp(ch,"dakika"))&& gelenDeger>59 )gelenDeger=59;if(!(strcmp(ch,"gun"))&& gelenDeger>30 && ay!=2){if(ay<=7 && ay%2==1)gelenDeger=31; else if(ay>=7 && ay%2==0)gelenDeger=31; else gelenDeger=30;} else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4!=0)gelenDeger=28; else if(!(strcmp(ch,"gun"))&& gelenDeger>28 && ay==2 && yil%4==0)gelenDeger=29; if(gelenDeger<=0)gelenDeger=1;ekranaYazdir(gelenYazi,gelenDeger,sutun,satir);}
+  else if(girdi==1)girdi=0;
+  
+  if(!digitalRead(okButon)){while(!digitalRead(okButon)); menuBasla==false; delay(200); return gelenDeger; }
+  }
+  
+
+}
+
+void ekranaYazdir(char gelenYazi[16], int gelenDeger, int sutun, int satir){
+  lcd.clear();
+  lcd.print(gelenYazi);
+  
+  if(gelenDeger != 9090){lcd.setCursor(satir,sutun); lcd.print(gelenDeger);}
+}
+
+void menuOlustur(int i, char dizi[7][12],int boyut){
+if((i%2)==0){
+lcd.clear();
+lcd.print(">");
+lcd.setCursor(1,0);
+lcd.print(dizi[i]);
+  if((boyut/14)>i+1){
+    lcd.setCursor(0,1);
+    lcd.print(dizi[i+1]);}
+  }
+  else{
+lcd.clear();
+lcd.print(dizi[i-1]);
+lcd.setCursor(0,1);
+lcd.print(">");
+lcd.setCursor(1,1);
+lcd.print(dizi[i]);
+  }
+}
+int menudizinti(int menuGezMax,char dizi[7][12],int boyut){
+  if(!digitalRead(artirButon)){
+   if(menuGezMax>menuGez)
+   menuGez++;
+   delay(100);
+   
+   menuOlustur(menuGez,dizi,boyut);
+   while(!digitalRead(artirButon));
+  }
+  else if(!digitalRead(azaltButon)){
+   if(menuGez>=1)
+    menuGez--;
+    delay(100);
+    menuOlustur(menuGez,dizi,boyut);
+    
+   while(!digitalRead(azaltButon));
+  }
+  else if(!digitalRead(okButon)){
+    while(!digitalRead(okButon));
+      
+      if(!(strcmp(dizi[menuGez],"manual"))){delay(200);manualMenu();}
+      else if(!(strcmp(dizi[menuGez],"Tarih Ayarla"))){geriGirdi=false; delay(200);TarihAyarla(); delay(500); menuOlustur(menuGez,dizi,boyut); }
+      else if(!(strcmp(dizi[menuGez],"baslat"))){geriGirdi=false; geriCikti=true;epromYaz(); baslat();}
+      else if(!(strcmp(dizi[menuGez],"nem"))){geriGirdi=true;delay(200); secim.nem=butonBasma(secim.nem,"Nemi belirleyin",1,1,"nem");menuOlustur(menuGez,dizi,boyut);}
+      else if(!(strcmp(dizi[menuGez],"isi"))){geriGirdi=true;delay(200); secim.sicaklik=butonBasma(secim.sicaklik,"isi belirleyin",1,1,"isi");menuOlustur(menuGez,dizi,boyut);}
+      else if(!(strcmp(dizi[menuGez],"Kac dk"))){geriGirdi=true;delay(200); secim.kacdk=butonBasma(secim.kacdk,"Kac dk donus",1,1,"A");menuOlustur(menuGez,dizi,boyut);}
+      else if(!(strcmp(dizi[menuGez],"cikis isi"))){geriGirdi=true;delay(200); secim.cikis_isi=butonBasma(secim.cikis_isi,"cikis isisi",1,1,"A");menuOlustur(menuGez,dizi,boyut);}
+      else if(!(strcmp(dizi[menuGez],"cikis nem"))){geriGirdi=true;delay(200); secim.cikis_nem=butonBasma(secim.cikis_nem,"cikis nemi",1,1,"A");menuOlustur(menuGez,dizi,boyut);}
+      else if(!(strcmp(dizi[menuGez],"cikis nem"))){geriGirdi=true;delay(200); secim.cikis_gun=butonBasma(secim.cikis_gun,"cikis gunu",1,1,"A");menuOlustur(menuGez,dizi,boyut);}
+      else if(!(strcmp(dizi[menuGez],"tavuk"))){{; secim=davuk; baslat();}}
+      else if(!(strcmp(dizi[menuGez],"kaz"))){{; secim=gaz; baslat();}}
+  }
+
+}
+
+
+void baslat(){
+
+if(geriCikti==false&&bitti==true){
+baslangicZamani=rtc.now();
+bitisZamani= rtc.now()+ TimeSpan(secim.gun, 0, 0, 0);bitti=false;epromYaz();}
+baslatMenuGez=1;
+calismaMenu();
+  while(bitti==false){
+    calismamenuGez(3);
+    
+    calisma(C,h,rtc.now().minute());
+    if(say>=3&&baslatMenuGez!=2){say=0; if(bitisZamani.unixtime()<=rtc.now().unixtime()) {bitti=true;epromYaz();menuOlustur(menuGez,menuDizi,sizeof(menuDizi));} h = dht.readHumidity(); if(bitti==false){calismaMenu();}}
+    
+    if(!digitalRead(geriButon)){geriGirdi=true;{while(!digitalRead(geriButon)); menuGez=0; menuOlustur(menuGez,geriDizi,sizeof(geriDizi)); while(geriGirdi){  menudizinti((sizeof(geriDizi)/14)-1,geriDizi,sizeof(geriDizi));}}}
+  }
+}
+void manualMenu(){
+
+secim.nem=butonBasma(secim.nem,"Nemi belirleyin",1,1,"nem");
+secim.sicaklik=butonBasma(secim.sicaklik,"isi belirleyin",1,1,"isi");
+secim.gun=butonBasma(secim.gun,"Kac gun surecek",1,1,"gunsure");
+secim.kacdk=butonBasma(secim.kacdk,"Kac dk da bir",1,1,"gunsure");
+secim.cikis_isi=butonBasma(secim.cikis_isi,"cikis isisi",1,1,"gunsure");
+secim.cikis_nem=butonBasma(secim.cikis_nem,"cikis nemi",1,1,"gunsure");
+secim.cikis_gun=butonBasma(secim.cikis_gun,"cikis gunu",1,1,"gunsure");
+bitti=true;
+geriCikti=false;
+baslat();
+ }
+ void TarihAyarla(){
+yil=butonBasma(yil,"Yili girin:",1,1,"yil");
+ay=butonBasma(ay,"ay girin:",1,1,"ay");
+gun=butonBasma(gun,"gun girin:",1,1,"gun");
+saat=butonBasma(saat,"Saati girin:",1,1,"saat");
+dakika=butonBasma(dakika,"Dakika girin:",1,1,"dakika");
+sprintf(yilchar,"%d",yil);
+sprintf(aychar,"%d",ay);
+sprintf(gunchar,"%d",gun);
+sprintf(saatchar,"%d",saat); 
+sprintf(dakikachar,"%d",dakika); 
+
+lcd.clear();
+lcd.print(F("Tarih Ayarlandi"));
+lcd.setCursor(0,1);
+strcat(gunchar,"/");
+strcat(gunchar,aychar);
+strcat(gunchar,"/");
+strcat(gunchar,yilchar);
+strcat(gunchar,"|");
+strcat(gunchar,saatchar);
+strcat(gunchar,":");
+strcat(gunchar,dakikachar);
+lcd.print(gunchar);
+strcpy(gunchar, "");
+   while(true){
+     if(!digitalRead(okButon)){
+    while(!digitalRead(okButon));
+      
+      DateTime gir (yil, ay, gun, saat, dakika, 0);
+      rtc.adjust(gir);
+      break;
+     }
+   }
+ }
+void calismaMenu(){
+    if(baslatMenuGez==1){
+      lcd.clear();
+      lcd.print(F("iSic:"));
+      lcd.setCursor(6,0);
+      lcd.print(secim.sicaklik);
+      lcd.setCursor(9,0);
+      lcd.print(F("iNem"));
+      lcd.print(secim.nem);
+      lcd.setCursor(0,1);
+      lcd.print(F("GSic"));
+      lcd.setCursor(6,1);
+      lcd.print((int)C);
+      lcd.setCursor(9,1);
+      lcd.print(F("GNem"));
+      lcd.print((int)h);
+      
+      }
+    else if(baslatMenuGez==2)
+    {
+      lcd.clear();
+      lcd.print(F("Bas: "));
+      sprintf(yilchar,"%d",baslangicZamani.year());
+      sprintf(aychar,"%d",baslangicZamani.month());
+      sprintf(gunchar,"%d",baslangicZamani.day());
+      strcat(gunchar,"/");
+      strcat(gunchar,aychar);
+      strcat(gunchar,"/");
+      strcat(gunchar,yilchar);
+      lcd.print(gunchar);
+      strcpy(gunchar, "");
+      lcd.setCursor(0,1);
+      lcd.print("Bit: ");
+      sprintf(yilchar,"%d",bitisZamani.year());
+      sprintf(aychar,"%d",bitisZamani.month());
+      sprintf(gunchar,"%d",bitisZamani.day());
+      strcat(gunchar,"/");
+      strcat(gunchar,aychar);
+      strcat(gunchar,"/");
+      strcat(gunchar,yilchar);
+      lcd.print(gunchar);
+      strcpy(gunchar, "");
+      }
+    else if(baslatMenuGez==3)
+    { 
+      lcd.clear();
+      TimeSpan ts1 = bitisZamani - rtc.now();
+      sprintf(igun,"%d",ts1.days());
+      sprintf(isaat,"%d",ts1.hours());
+      sprintf(idk,"%d",ts1.minutes());
+      sprintf(isn,"%d",ts1.seconds());
+      lcd.print(F("Bitis suresi"));
+      lcd.setCursor(0,1);
+      
+      strcat(tarihchar,igun);
+      strcat(tarihchar,":");
+      strcat(tarihchar,isaat);
+      strcat(tarihchar,":");
+      strcat(tarihchar,idk);
+      strcat(tarihchar,":");
+      strcat(tarihchar,isn);
+      lcd.print(tarihchar);
+      strcpy(tarihchar, "");
+      Serial.println(tarihchar);
+      }
+    
+    
+  
+  
+  
+  
+  }
+void calismamenuGez(int menuGezMax){
+  if(!digitalRead(artirButon)){
+    
+   if(menuGezMax>baslatMenuGez)
+   baslatMenuGez++;
+   calismaMenu();
+   while(!digitalRead(artirButon));
+  }
+  else if(!digitalRead(azaltButon)){
+   if(baslatMenuGez>1)
+    baslatMenuGez--;
+    calismaMenu();
+   while(!digitalRead(azaltButon));
+   
+  }
+else if(!digitalRead(kapaButon)){
+    bitti=true;
+    epromYaz();
+    menuOlustur(menuGez,menuDizi,sizeof(menuDizi));
+   while(!digitalRead(kapaButon));
+   
+  }
+  
+  }
+  void epromYaz(){
+  EEPROM.put(55,bitisZamani);
+  EEPROM.update(2,bitti);
+  EEPROM.put(88,secim);
+  EEPROM.put(25,baslangicZamani);
+    }
+ void epromOku(){
+    baslangicZamani= EEPROM.get(25,baslangicZamani);
+   bitisZamani= EEPROM.get(55,bitisZamani);
+  EEPROM.get(2,bitti);
+  secim=EEPROM.get(88,secim);
+  }
+    void calisma(float sicaklik, float nem,int dk){
+
+TimeSpan ts2 = bitisZamani - rtc.now();
+  if(ts2.days()<secim.cikis_gun&&!calis_set){
+    Setpoint=secim.cikis_isi;
+    secim.sicaklik=secim.cikis_isi;
+    secim.nem=secim.cikis_nem;
+    calis_set=true;
+    }
+  else if(!calis_set2){Setpoint=secim.sicaklik; calis_set2=true;}
+    if(calis_set||calis_set2){PID_control();
+    
+    if(nem<secim.nem||nozul)
+    {//nozül röle cek
+      nozul=true;
+      
+      if((nozul&&nem>=secim.nem+5) || nem>=100)
+      {nozul=false; //nozul bırak}
+    }
+    
+    
+    }
+    }
+
+  
+    if(dk%secim.kacdk==0){
+      
+      eskiZaman=millis();
+      if(!donuyor){donuyor=true; yeniZaman=eskiZaman; Serial.println("dçnüyor");}
+      
+      if(donuyor==true && (eskiZaman-yeniZaman>7000) && TT==false){
+        Serial.println("Durdu");
+        TT=true;
+        yeniZaman=eskiZaman;
+        
+        }
+      
+      }
+     else if(donuyor) {donuyor=false; TT=false;}
+    
+    }
+
+    void PID_control(void){
+  elapsedTime = millis() - prev_time;   
+  if(elapsedTime > refresh_rate){
+    say++;
+    DS18B20.requestTemperatures();
+    C = DS18B20.getTempCByIndex(0);
+    now_pid_error = Setpoint - C;
+  
+    PID_p = kp * now_pid_error;
+    PID_d = kd*((now_pid_error - prev_pid_error)/refresh_rate);
+    if(-3 < now_pid_error && now_pid_error < 3){
+      PID_i = PID_i + (ki * now_pid_error);}
+    else{PID_i = 0;}
+
+    PID_total = PID_p + PID_i + PID_d;  
+    PID_total = map(PID_total, 0, 150, 0, 255  );
+
+    
+    
+    if(PID_total <= 0){PID_total = 10;}
+    if(PID_total >= 200) {PID_total =200; } 
+
+    
+   
+ if(C != DEVICE_DISCONNECTED_C) 
+  {
+  dimmer.setPower(PID_total);
+  } 
+    
+    
+    
+    prev_time = millis();                       
+    prev_pid_error = now_pid_error;             
+  }
+}
